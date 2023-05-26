@@ -33,14 +33,14 @@
 
 (defn static-load-balancer
   "load-balancer with one queue"
-  [] ARabbit)
+  [] {:name :A :channel ARabbit})
 
 ;;  This is a LB with random assignment of target queues.
 
 (defn random-load-balancer []
   (if (= 0 (Math/round (rand)))
-    ARabbit
-    BRabbit))
+    {:name :A :channel ARabbit}
+    {:name :B :channel BRabbit}))
 
 ;; We want to test the effect of different connection lifetimes on the assigment
 ;; of the LB.  This is called a refresh-strategy.  It depends on the LB and
@@ -68,30 +68,41 @@
 
 ;; # Our applications
 
+;; a registry for metrics
+
+(def reg (new-registry))
+
 (defn producer
   "Function simulates a application which writes to a queue (a channel).
    The channel should be provided as a function which returns
    a channel depening on the given time.  Produces until the atom `run` is false"
   [c-fn run]
-  (go-loop [c (c-fn (now))]
-    (>! c :payload)
-    (let [x @run]
-      (if (true? x)
-        (recur (c-fn (now)))
-        x))))
+  (let [queue (atom "")]
+    {:queue queue
+     :producer (go-loop [{name :name c :channel} (c-fn (now))]
+                 (reset! queue name)
+                 (>! c :payload)
+                 (Thread/sleep 5)
+                 (let [x @run]
+                   (if (true? x)
+                     (recur (c-fn (now)))
+                     x)))}))
 
 
 ;; still quite similar to producer.
 ;; may evolve differently
 (defn consumer
   [c-fn run]
-  (let [reg (new-registry)  ;;  TODO: maybe root binding?
-        cnt (counter reg "task-counter")]
+  (let [cnt (counter reg "task-counter")
+        queue (atom "")]
     {:counter cnt
+     :queue   queue
      ;; TODO: macro
-     :consumer (go-loop [c (c-fn (now))]
+     :consumer (go-loop [{name :name c :channel} (c-fn (now))]
+                 (reset! queue name)
                  (<! c)
                  (inc! cnt)
+                 (Thread/sleep 5)
                  (let [x @run]
                    (if (true? x)
                      (recur (c-fn (now)))
@@ -102,8 +113,10 @@
   [s agg]
   (conj agg
         {:sampled-at (now)
-         :queues (doall (for [q (:queues s)] (queue-size q)))
+         :queue-size (doall (for [q (:queues s)] (queue-size q)))
          :tasks-consumed (doall (for [c (get-in s [:consumers :pods])] (value (:counter c))))
+         :prod-queues (doall (map #(deref (:queue %)) (get-in s [:producers :pods])))
+         :cons-queues (doall (map #(deref (:queue %)) (get-in s [:consumers :pods])))
          }))
 
 (defn collect-stats
@@ -118,10 +131,14 @@
         (recur (sample s res))))))
 
 
-(defn deploy [name count fn conn-strat]
-  (let [run (atom true)]
+(defn deploy [name count f config]
+  (let [run (atom true)
+        {lb :lb life-time :conn-life-time-sec} config]
     {:name name  ;;;  TODO: get rid of the name, since it is a key of the simulation
-     :pods [(fn conn-strat run)]
+     :pods (doall
+            (repeatedly count
+                        #(f (conn-refresh-strategy lb life-time)
+                            run)))
      :running run}))
 
 (defn terminate [deploy]
@@ -136,10 +153,9 @@
 
 (defn startup
   "Returns a collection of queues, producers and consumers"
-  [lb life-time-sec]
-  (let [lb-strat (conn-refresh-strategy lb life-time-sec)
-        cs (deploy "consumer" 3 consumer lb-strat)
-        ps (deploy "producer" 3 producer lb-strat)]
+  [config]
+  (let [cs (deploy "consumer" 3 consumer config)
+        ps (deploy "producer" 3 producer config)]
     {:queues [ARabbit BRabbit]
      :producers ps
      :consumers cs}))
@@ -150,8 +166,8 @@
 ;; the duration of simulation
 (defn simulate
   "Returns a list of statistics"
-  [lb life-time-sec duration-sec]
-  (let [sim (startup lb life-time-sec)
+  [{lb :lb  life-time-sec :conn-life-time-sec duration-sec :duration-sec :as conf}]
+  (let [sim (startup conf)
         stats (collect-stats sim duration-sec)]
     (println "Size" (queue-size ARabbit))
     (shutdown-apps [(:producers sim) (:consumers sim)])
@@ -159,35 +175,63 @@
     stats))
 
 
-(clerk/table
-  (simulate static-load-balancer
-                    10
-                    5))
+(def example-config
+  {:lb    random-load-balancer
+   :duration-sec 10
+   :conn-life-time-sec 0})
 
+(clerk/table
+  (simulate example-config))
+
+(clerk/table
+ (simulate
+  {:lb    random-load-balancer
+   :duration-sec 10
+   :conn-life-time-sec 1}))
 
 (comment
 
-(def sim (startup static-load-balancer 0))
+ ;; very long life-time
 
-(shutdown-apps [(:producers sim) (:consumers sim)])
-  (def a (java.time.Instant/now))
-  (def b (java.time.Instant/now))
+ (clerk/table
+  (simulate random-load-balancer
+            10
+            10))
+(clerk/table
+  (simulate static-load-balancer
+            10
+            5))
 
-  (def astr (conn-refresh-strategy static-load-balancer 10))
+ ;;  Use Random Load Balancer
 
-  (astr (now))
+ (clerk/table
+  (simulate random-load-balancer
+            10
+            5))
 
-  (queue-size ARabbit)
 
-  (def running (atom true))
-  (reset! running false)
 
-  (producer astr running)
 
-  (consumer ARabbit running)
+ (def sim (startup static-load-balancer 0))
+ (def sim (startup example-config))
 
-  (def cs (simulate static-load-balancer
-                    10
-                    5))
+ (shutdown-apps [(:producers sim) (:consumers sim)])
 
-  )
+ (def astr (conn-refresh-strategy static-load-balancer 10))
+
+ (astr (now))
+
+ (queue-size ARabbit)
+
+ (def running (atom true))
+ (reset! running false)
+
+ (producer astr running)
+
+ (consumer ARabbit running)
+
+ (def cs (simulate static-load-balancer
+                   10
+                   5))
+
+ )
