@@ -16,18 +16,6 @@
      (is (= 3 (apply + (random-seq 6))))))
 
 
-(defn get-sum [n]
-  (apply + (random-seq n)))
-
-(defn aggregate [n s]
-"If we have x pods how often would we get a balanced or not balanced distribution
- out of s samples"
-  (->> (repeatedly s #(get-sum n))
-       (group-by #(= % 3))
-       (map #(vector (first %) (count (second %))))))
-
-
-(aggregate 6 1000)
 
 ;; as in the law of small numbers:  we cannot expect more than a 3rd happy cases
 ;; from the persective of a single application

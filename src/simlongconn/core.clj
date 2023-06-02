@@ -1,3 +1,5 @@
+;; # Simulation of effect of connection-life-time on Rabbit throughput
+^{:nextjournal.clerk/visibility {:code :hide}}
 (ns simlongconn.core
   (:gen-class)
   (:require [clojure.pprint :as p]
@@ -6,24 +8,58 @@
             [metrics.core :refer [new-registry]]
             [metrics.counters :refer [counter inc! value]]))
 
+;; ## Problem with small samples
+;;
+;; Given an NLB balances requests between 2 Clusters.
+;; If an app with n pods is deployed and request connections
+;; the resulting distribution can be written as a seq of zeros and ones.
+
+^{:nextjournal.clerk/visibility {:result :hide}}
 (defn random-seq [n]
   (repeatedly n #(Math/round (rand))))
 
+(random-seq 6)
+
+;; For 6 clients there is for our case only one ideal distribution: (0 0 0 1 1 1)
+;; If we want to measure the frequency of the optimal distribution we can take the
+;; sum of the distribition as follows:
+
+^{:nextjournal.clerk/visibility {:result :hide}}
+(defn get-sum [n]
+  (apply + (random-seq n)))
+
+^{:nextjournal.clerk/visibility {:result :hide}}
+(defn aggregate [n s]
+"If we have x pods how often would we get a balanced or not balanced distribution
+ out of s samples"
+  (->> (repeatedly s #(get-sum n))
+       (group-by #(= % 3))
+       (map #(vector (first %) (count (second %))))))
+
+(aggregate 6 1000)
+
+;; In roughly one third of all cases we get an optimal distribution
+
+;; ## Simulate the effect of limited connection life time
+
+^{:nextjournal.clerk/visibility {:code :fold :result :hide}}
 (defn now []
   (java.time.Instant/now))
 
+^{:nextjournal.clerk/visibility {:code :fold :result :hide}}
 (defn diff-seconds [a b]
   (.getSeconds (java.time.Duration/between a b)))
 
-;; # RabbitMQ instances
-;;
 ;; We have two queues in two clusters with a limited capacity
 
+^{:nextjournal.clerk/visibility {:result :hide}}
 (def ARabbit (chan 1000))
+^{:nextjournal.clerk/visibility {:result :hide}}
 (def BRabbit (chan 1000))
 
 ;; We want to measure the backlog in the queues.
 
+^{:nextjournal.clerk/visibility {:code :fold :result :hide}}
 (defn queue-size [c]
   (.. c buf count))
 
@@ -31,22 +67,29 @@
 ;; We have two different ones:
 ;; The first is the setup for one Rabbit
 
+^{:nextjournal.clerk/visibility {:result :hide}}
 (defn static-load-balancer
   "load-balancer with one queue"
   [] {:name :A :channel ARabbit})
 
-;;  This is a LB with random assignment of target queues.
+;;  This is a LB with random assignment with equal chance of target queues.
 
+^{:nextjournal.clerk/visibility {:result :hide}}
 (defn random-load-balancer []
   (if (= 0 (Math/round (rand)))
     {:name :A :channel ARabbit}
     {:name :B :channel BRabbit}))
 
 ;; We want to test the effect of different connection lifetimes on the assigment
-;; of the LB.  This is called a refresh-strategy.  It depends on the LB and
-;; the expected lifetime.  If the life-time is 0, we do not want to refresh the
-;; connection.  Otherwise we get a strategy which gets a new connection assigned
-;; by the LB.  A strategy is implmented as a function.
+;; of the LB.  This is called a refresh-strategy.  Calling
+;; `conn-refresh-strategy` returns an instance of a refresh-strategy which
+;; should be used in an instance of an application. It depends on the LB and the
+;; expected lifetime of the connection per instance.  If the life-time is 0, it
+;; will refresh the connection.  Otherwise we get a strategy which
+;; gets a new connection assigned by the LB.  A strategy is implmented as a
+;; function.
+
+;; TODO: add penalty for establishing connection
 
 (defn conn-refresh-strategy
   "Returns a fn which accepts a instant and returns a channel (queue).
@@ -66,7 +109,7 @@
            @queue)))))
 
 
-;; # Our applications
+;; ## Our applications
 
 ;; a registry for metrics
 
@@ -130,20 +173,35 @@
         res
         (recur (sample s res))))))
 
-
-(defn deploy [name count f config]
+;; We want to be able deploy applications
+(defn deploy [f config count]
   (let [run (atom true)
         {lb :lb life-time :conn-life-time-sec} config]
-    {:name name  ;;;  TODO: get rid of the name, since it is a key of the simulation
-     :pods (doall
+    {:pods (doall
             (repeatedly count
                         #(f (conn-refresh-strategy lb life-time)
                             run)))
      :running run}))
 
+;; We want access a pair of producing and consuming applications with multiple instances per application
+
+^{:nextjournal.clerk/visibility {:result :hide}}
+(defn startup
+  "Returns a collection of queues, producers and consumers"
+  [{procnt :producer-count
+    concnt :consumer-count
+    :as config}]
+  (let [cs (deploy consumer config concnt)
+        ps (deploy producer config procnt)]
+    {:queues [ARabbit BRabbit]
+     :producers ps
+     :consumers cs}))
+
+;; We want to cleanly finish a simulation
 (defn terminate [deploy]
   (reset! (:running deploy) false))
 
+^{:nextjournal.clerk/visibility {:result :hide}}
 (defn shutdown-apps [deploys]
   (doseq [d deploys]
     (println "Terminating " (:name d))
@@ -151,34 +209,59 @@
     (Thread/sleep 10))
   #_(terminate collector))
 
-(defn startup
-  "Returns a collection of queues, producers and consumers"
-  [config]
-  (let [cs (deploy "consumer" 3 consumer config)
-        ps (deploy "producer" 3 producer config)]
-    {:queues [ARabbit BRabbit]
-     :producers ps
-     :consumers cs}))
+;; The simulation depends on
+;; - the load-balancer (static queue or multiple)
+;; - the duration of simulation
+;; - the connection-lifetime
+;; - count of producer pods
+;; - count of consumer pods
+^{:nextjournal.clerk/visibility {:result :hide}}
+(def example-config
+  {:lb    random-load-balancer
+   :duration-sec 10
+   :conn-life-time-sec 0
+   :producer-count  3
+   :consumer-count  3})
 
-;; simulation depend on
-;; the load-balancer (static queue or multiple)
-;; the connection-lifetime
-;; the duration of simulation
+^{:nextjournal.clerk/visibility {:result :hide}}
 (defn simulate
   "Returns a list of statistics"
-  [{lb :lb  life-time-sec :conn-life-time-sec duration-sec :duration-sec :as conf}]
+  [{lb :lb  life-time-sec :conn-life-time-sec
+    duration-sec :duration-sec :as conf}]
   (let [sim (startup conf)
         stats (collect-stats sim duration-sec)]
-    (println "Size" (queue-size ARabbit))
     (shutdown-apps [(:producers sim) (:consumers sim)])
     (println "shutdown. Size" (queue-size ARabbit))
     stats))
 
+^{:nextjournal.clerk/visibility {:result :hide}}
+(def simresult
+  (simulate
+   {:lb    random-load-balancer
+    :duration-sec 10
+    :conn-life-time-sec 1
+    :producer-count 3
+    :consumer-count 3}))
 
-(def example-config
+(clerk/table (map #(update % :sampled-at str) simresult ))
+
+(def timescale (map #(str (:sampled-at %)) simresult))
+(def qsa (map #(first (:queue-size %)) simresult))
+(def qsb (map #(second (:queue-size %)) simresult))
+
+(clerk/plotly {:data [{:x timescale :y qsb :type :scatter}
+                      {:x timescale :y qsa :type :scatter}]
+               :layout {:title "Queue size per broker"}})
+
+(comment
+
+(clerk/table
+ (simulate
   {:lb    random-load-balancer
    :duration-sec 10
-   :conn-life-time-sec 0})
+   :conn-life-time-sec 1
+   :producer-count 3
+   :consumer-count 3}))
 
 (clerk/table
   (simulate example-config))
@@ -187,9 +270,9 @@
  (simulate
   {:lb    random-load-balancer
    :duration-sec 10
-   :conn-life-time-sec 1}))
-
-(comment
+   :conn-life-time-sec 1
+   :producer-count 3
+   :consumer-count 3}))
 
  ;; very long life-time
 
