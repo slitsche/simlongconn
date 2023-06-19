@@ -3,7 +3,7 @@
 (ns simlongconn.core
   (:gen-class)
   (:require [clojure.pprint :as p]
-            [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan]]
+            [clojure.core.async :as a :refer [>! <! go go-loop chan timeout alt!]]
             [nextjournal.clerk :as clerk]
             [metrics.core :refer [new-registry]]
             [metrics.counters :refer [counter inc! value]]))
@@ -124,7 +124,7 @@
     {:queue queue
      :producer (go-loop [{name :name c :channel} (c-fn (now))]
                  (reset! queue name)
-                 (>! c :payload)
+                 (alts! [[c :payload] (timeout 5)])
                  (Thread/sleep 5)
                  (let [x @run]
                    (if (true? x)
@@ -143,7 +143,7 @@
      ;; TODO: macro
      :consumer (go-loop [{name :name c :channel} (c-fn (now))]
                  (reset! queue name)
-                 (<! c)
+                 (alts! [c  (timeout 10)])
                  (inc! cnt)
                  (Thread/sleep 5)
                  (let [x @run]
@@ -247,9 +247,17 @@
 (def timescale (map #(str (:sampled-at %)) simresult))
 (def qsa (map #(first (:queue-size %)) simresult))
 (def qsb (map #(second (:queue-size %)) simresult))
+;; (def through-put (map #(apply + (:tasks-consumed %)) simresult))
 
-(clerk/plotly {:data [{:x timescale :y qsb :type :scatter}
-                      {:x timescale :y qsa :type :scatter}]
+(def through-put
+  (->> (map #(apply + (:tasks-consumed %)) simresult)
+       (partition 2 1 )
+       (map (juxt second first))
+       (map #(apply - %))))
+
+(clerk/plotly {:data [{:x timescale :y qsb :type :scatter :name "B"}
+                      {:x timescale :y qsa :type :scatter :name "A"}
+                      {:x timescale :y through-put :type :scatter :name "Throughput"}]
                :layout {:title "Queue size per broker"}})
 
 (comment
