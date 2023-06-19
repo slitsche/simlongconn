@@ -204,7 +204,6 @@
 ^{:nextjournal.clerk/visibility {:result :hide}}
 (defn shutdown-apps [deploys]
   (doseq [d deploys]
-    (println "Terminating " (:name d))
     (terminate d)
     (Thread/sleep 10))
   #_(terminate collector))
@@ -231,7 +230,7 @@
   (let [sim (startup conf)
         stats (collect-stats sim duration-sec)]
     (shutdown-apps [(:producers sim) (:consumers sim)])
-    (println "shutdown. Size" (queue-size ARabbit))
+    (println "shutdown. Size" (queue-size ARabbit) (queue-size BRabbit))
     stats))
 
 ^{:nextjournal.clerk/visibility {:result :hide}}

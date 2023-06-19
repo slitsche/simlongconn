@@ -6,7 +6,10 @@
   :dependencies [[org.clojure/clojure "1.10.0"]
                  [org.clojure/core.async "1.6.673"]
                  [io.github.nextjournal/clerk "0.13.842"]
-                 [metrics-clojure "2.10.0"]]
+                 [metrics-clojure "2.10.0"]
+                 ;; for testing purposes
+                 [instaparse "1.4.12"]
+                 [enlive "1.1.6"]]
   :main ^:skip-aot simlongconn.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}
