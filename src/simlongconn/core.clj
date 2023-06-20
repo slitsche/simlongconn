@@ -6,7 +6,9 @@
             [clojure.core.async :as a :refer [>! <! go go-loop chan timeout alt!]]
             [nextjournal.clerk :as clerk]
             [metrics.core :refer [new-registry]]
-            [metrics.counters :refer [counter inc! value]]))
+            [metrics.counters :refer [counter inc! value]])
+  (:import   [javax.imageio ImageIO]
+             [java.io File]))
 
 ;; ## Problem with small samples
 ;;
@@ -244,7 +246,9 @@
 
 (clerk/table (map #(update % :sampled-at str) simresult ))
 
+;; Prepare the data for plotting the graphs
 (def timescale (map #(str (:sampled-at %)) simresult))
+;; The size of the queues/brokers
 (def qsa (map #(first (:queue-size %)) simresult))
 (def qsb (map #(second (:queue-size %)) simresult))
 ;; (def through-put (map #(apply + (:tasks-consumed %)) simresult))
@@ -255,10 +259,74 @@
        (map (juxt second first))
        (map #(apply - %))))
 
-(clerk/plotly {:data [{:x timescale :y qsb :type :scatter :name "B"}
-                      {:x timescale :y qsa :type :scatter :name "A"}
-                      {:x timescale :y through-put :type :scatter :name "Throughput"}]
+^{:nextjournal.clerk/visibility {:code :hide}}
+(clerk/plotly {:data [{:x timescale :y qsb :type :scatter :name "Length B"}
+                      {:x timescale :y qsa :type :scatter :name "Length A"}
+                      #_{:x timescale :y through-put :type :scatter :name "Throughput"}]
                :layout {:title "Queue size per broker"}})
+
+^{:nextjournal.clerk/visibility {:code :hide}}
+(clerk/plotly {:data [{:x timescale :y through-put :type :scatter :name "Throughput"}]
+               :layout {:title "Throughput of the system"}})
+
+;; ## Some results
+
+;; collection of graphs from different configs
+
+^{:nextjournal.clerk/visibility {:result :hide}}
+{:lb    random-load-balancer
+ :duration-sec 180
+ :conn-life-time-sec 1
+ :producer-count 3
+ :consumer-count 3}
+
+^{:nextjournal.clerk/visibility {:code :hide}}
+(ImageIO/read (File. "doc/2broker-smallqueue-1sec.png"))
+
+;; We hit the limit of the queue regularly.  Does it influence the throughput?
+;; (Same config, increased size of queues)
+
+
+^{:nextjournal.clerk/visibility {:code :hide}}
+(ImageIO/read (File. "doc/2broker-3min-10000queuesize.png"))
+
+;; Limit of the queue does not influence the throughput.
+;;  What about the connection lifetime?
+
+^{:nextjournal.clerk/visibility {:result :hide}}
+{:lb    random-load-balancer
+ :duration-sec 180
+ :conn-life-time-sec 5
+ :producer-count 3
+ :consumer-count 3}
+
+^{:nextjournal.clerk/visibility {:code :hide}}
+(ImageIO/read (File. "doc/2broker-5seclife.png"))
+
+;; What happens if we increase the number of pods?
+
+^{:nextjournal.clerk/visibility {:result :hide}}
+{:lb    random-load-balancer
+ :duration-sec 180
+ :conn-life-time-sec 5
+ :producer-count 6
+ :consumer-count 6}
+
+^{:nextjournal.clerk/visibility {:code :hide}}
+(ImageIO/read (File. "doc/2broker-6pods-5sec.png"))
+
+;;  What if we increase the life-time with the 6 pods?
+
+^{:nextjournal.clerk/visibility {:result :hide}}
+{:lb    random-load-balancer
+:duration-sec 180
+:conn-life-time-sec 15
+:producer-count 6
+:consumer-count 6}
+
+^{:nextjournal.clerk/visibility {:code :hide}}
+(ImageIO/read (File. "doc/2broker-15sec-6pods.png"))
+
 
 (comment
 
