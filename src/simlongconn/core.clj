@@ -3,7 +3,7 @@
 (ns simlongconn.core
   (:gen-class)
   (:require [clojure.pprint :as p]
-            [clojure.core.async :as a :refer [>! <! go go-loop chan timeout alt!]]
+            [clojure.core.async :as a :refer [>! <! go go-loop chan timeout alts!]]
             [nextjournal.clerk :as clerk]
             [metrics.core :refer [new-registry]]
             [metrics.counters :refer [counter inc! value]])
@@ -175,7 +175,10 @@
         res
         (recur (sample s res))))))
 
-;; We want to be able deploy applications
+;; We want to be able deploy applications.  For a certain type of
+;; function f we create count number of instances.
+;; Every instance gets its own connection refresh strategy.
+
 (defn deploy [f config count]
   (let [run (atom true)
         {lb :lb life-time :conn-life-time-sec} config]
@@ -226,15 +229,15 @@
 
 ^{:nextjournal.clerk/visibility {:result :hide}}
 (defn simulate
-  "Returns a list of statistics"
-  [{lb :lb  life-time-sec :conn-life-time-sec
-    duration-sec :duration-sec :as conf}]
-  (let [sim (startup conf)
+  "Returns a list of statistics for a given configuration."
+  [{duration-sec :duration-sec :as conf}]
+  (let [sim   (startup conf)
         stats (collect-stats sim duration-sec)]
     (shutdown-apps [(:producers sim) (:consumers sim)])
     (println "shutdown. Size" (queue-size ARabbit) (queue-size BRabbit))
     stats))
 
+;; Now we simulate a given configuration:
 ^{:nextjournal.clerk/visibility {:result :hide}}
 (def simresult
   (simulate
