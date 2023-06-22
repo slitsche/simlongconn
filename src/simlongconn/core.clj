@@ -276,6 +276,20 @@
 
 ;; collection of graphs from different configs
 
+;; Set up a base line with one cluster
+
+^{:nextjournal.clerk/visibility {:result :hide}}
+{:lb    static-load-balancer
+ :duration-sec 120
+ :conn-life-time-sec 1
+ :producer-count 3
+ :consumer-count 3}
+
+^{:nextjournal.clerk/visibility {:code :hide}}
+(ImageIO/read (File. "doc/reference-1-cluster.png"))
+
+;;  Change to the random-load-balancer
+
 ^{:nextjournal.clerk/visibility {:result :hide}}
 {:lb    random-load-balancer
  :duration-sec 180

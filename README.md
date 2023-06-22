@@ -11,15 +11,24 @@ It uses [Leiningen](https://leiningen.org/) as build script.
 ## Usage
 
 Best usage is with [Clerk](https://github.com/nextjournal/clerk).  See
-`dev/user.clj` for guidance on usage.
+`dev/user.clj` for guidance on usage.  Please start first a REPL in the root
+folder of the project:
 
-## Options
+    $ lein repl
 
-FIXME: listing of options this app accepts.
+After that evaluate the two forms from the `user.clj`.
 
-## Examples
+    simlongconn.core=> (clerk/serve! {:browse? true :port 6677 :watch-paths ["src/simlongconn"]})
+    Clerk webserver started on http://localhost:6677 ...
+    Starting new watcher for paths ["src/simlongconn"]
+    {:browse? true, :port 6677, :watch-paths ["src/simlongconn"]}
 
-...
+    simlongconn.core=> (clerk/show! "src/simlongconn/core.clj")
+    shutdown. Size 36 151
+    Clerk evaluated 'src/simlongconn/core.clj' in 12318.883507ms.
+    nil
+    simlongconn.core=>
+
 
 
 ## License
