@@ -242,7 +242,7 @@
 (def simresult
   (simulate
    {:lb    random-load-balancer
-    :duration-sec 10
+    :duration-sec 1
     :conn-life-time-sec 1
     :producer-count 3
     :consumer-count 3}))
